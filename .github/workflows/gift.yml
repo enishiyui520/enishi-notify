@@ -1,0 +1,43 @@
+name: 緣結 會員贈禮排行
+on:
+  schedule:
+    - cron: "20 16 * * *"    # 每天 UTC16:20 抓取（掃完結直播聊天室）
+    - cron: "0 1 1 * *"      # 每月1號 UTC01:00=台灣09:00 發上月榜
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "harvest 或 post"
+        default: "harvest"
+permissions:
+  contents: write
+jobs:
+  gift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 裝 chat-downloader
+        run: pip install chat-downloader
+      - name: 決定模式
+        id: m
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 1 1 * *" ] || [ "${{ github.event.inputs.mode }}" = "post" ]; then
+            echo "mode=post" >> $GITHUB_OUTPUT
+          else
+            echo "mode=harvest" >> $GITHUB_OUTPUT
+          fi
+      - name: 跑贈禮排行
+        env:
+          MODE: ${{ steps.m.outputs.mode }}
+          YT_CHANNEL_ID: ${{ secrets.YT_CHANNEL_ID }}
+          WEBHOOK_GIFT: ${{ secrets.WEBHOOK_GIFT }}
+        run: python gift_leaderboard.py
+      - name: 存回狀態
+        run: |
+          git config user.name "enishi-bot"
+          git config user.email "bot@enishi.dev"
+          git add gift_state.json || true
+          git commit -m "update gift_state" || echo "no change"
+          git push || echo "nothing to push"
