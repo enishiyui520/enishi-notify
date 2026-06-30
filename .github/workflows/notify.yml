@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: 安裝相依
-        run: pip install -q twscrape chat-downloader
+        run: pip install -q twscrape chat-downloader youtube-transcript-api
       - name: YouTube 通知
         env:
           YT_CHANNEL_ID: ${{ secrets.YT_CHANNEL_ID }}
@@ -32,10 +32,11 @@ jobs:
           X_USERNAME: ${{ secrets.X_USERNAME }}
           X_TARGET: ${{ secrets.X_TARGET }}
         run: python x_notify.py
-      - name: 直播精華 時間軸
+      - name: 直播精華＋懶人包
         env:
           YT_CHANNEL_ID: ${{ secrets.YT_CHANNEL_ID }}
           WEBHOOK_HL: ${{ secrets.WEBHOOK_HL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python highlights.py
       - name: 保存狀態
         run: |
