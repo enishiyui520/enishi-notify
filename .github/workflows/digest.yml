@@ -1,0 +1,21 @@
+name: 緣結 每日回顧（熱詞+懶人包）
+on:
+  schedule:
+    - cron: "30 13 * * *"   # 每天 UTC 13:30 = 台灣 21:30
+  workflow_dispatch: {}
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 裝 jieba
+        run: pip install jieba
+      - name: 每日回顧
+        env:
+          STATS_BOT_TOKEN: ${{ secrets.STATS_BOT_TOKEN }}
+          WEBHOOK_RECAP: ${{ secrets.WEBHOOK_RECAP }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python digest.py
