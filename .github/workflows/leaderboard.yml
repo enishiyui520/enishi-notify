@@ -1,0 +1,18 @@
+name: 緣結 表情排行榜
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 每天 UTC 13:00 = 台灣 21:00
+  workflow_dispatch: {}
+jobs:
+  lb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 表情排行榜
+        env:
+          STATS_BOT_TOKEN: ${{ secrets.STATS_BOT_TOKEN }}
+          WEBHOOK_LB: ${{ secrets.WEBHOOK_LB }}
+        run: python leaderboard.py
