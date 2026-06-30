@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """YouTube 會員贈禮排行（學圖奇 gift sub 精神）。
-MODE=harvest：掃頻道最近的直播，從聊天室 replay 抓「會員贈禮」事件，累積每人每月送幾個（去重已掃過的影片）。
-MODE=post   ：每月 1 號發「上個月」的贈禮排行榜到 Discord，然後該月封存。
+掃頻道最近的直播，從聊天室 replay 抓「會員贈禮」事件，累積每人每月送幾個（去重已掃過的影片），
+然後把「本月榜 + 累積榜」推進 OBS 跑馬燈 Worker（不進 Discord，直播畫面動態呈現）。
 跑在 GitHub Actions。狀態存 gift_state.json（commit 回 repo）。
 
 前提：頻道需已開啟「會員 + 會員贈禮」(1000訂閱+YPP)。未開啟前會跑綠燈但 0 筆。"""
 import os, sys, io, json, re, time, datetime, urllib.request
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-MODE = os.environ.get("MODE", "harvest")
 CH = os.environ["YT_CHANNEL_ID"]
-WH = os.environ["WEBHOOK_GIFT"]
+WORKER_URL = os.environ["WORKER_DONATE_URL"].rstrip("/")  # 例 https://enishi-donate.enishi-yui.workers.dev
+DONATE_SECRET = os.environ["DONATE_SECRET"]
 STATE_FILE = "gift_state.json"
 UA = "Mozilla/5.0 (enishi-gift)"
 
@@ -28,9 +28,11 @@ def save_state(s):
 def tw_now():
     return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
 
-def post_wh(content):
-    body = json.dumps({"content": content[:1990], "allowed_mentions": {"parse": []}}).encode()
-    req = urllib.request.Request(WH, data=body, headers={"Content-Type": "application/json", "User-Agent": UA})
+def push_to_overlay(month, month_rank, all_rank):
+    """把贈禮榜推進 OBS 跑馬燈 Worker（不進 Discord）。"""
+    body = json.dumps({"month": month, "monthRank": month_rank, "allRank": all_rank}).encode()
+    req = urllib.request.Request(WORKER_URL + "/gift-hook", data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "x-auth": DONATE_SECRET, "User-Agent": UA})
     urllib.request.urlopen(req, timeout=30)
 
 def recent_video_ids():
@@ -92,32 +94,21 @@ def harvest():
     save_state(state)
     print(f"harvest 完成：本次掃 {new_done} 支新影片。累積月份：{ {k: sum(v.values()) for k,v in months.items()} }")
 
-def post():
-    state = load_state()
-    # 上個月
-    now = tw_now()
-    first = now.replace(day=1)
-    last_month = (first - datetime.timedelta(days=1)).strftime("%Y-%m")
-    data = state["months"].get(last_month, {})
-    if not data:
-        print(f"{last_month} 無贈禮資料，不發（可能會員/贈禮尚未開啟或當月無人贈禮）")
-        return
-    ranking = sorted(data.items(), key=lambda kv: kv[1], reverse=True)[:10]
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    total = sum(data.values())
-    y, mo = last_month.split("-")
-    lines = [f"# 🎁 結緣神社・{y}年{int(mo)}月 會員贈禮排行 ⛩️", ""]
-    lines.append(f"上個月共有 **{total}** 份會員贈禮，感謝以下大恩人的結緣之力 ✨")
-    lines.append("")
-    for i, (name, n) in enumerate(ranking):
-        lines.append(f"{medals[i]} **{name}** ・ 贈禮 {n} 份")
-    lines.append("\n（每月 1 號結算上月 ・ 會員贈禮是緣結最大的支持 🎀）")
-    post_wh("\n".join(lines))
-    print(f"✅ 已發 {last_month} 贈禮排行（{len(ranking)} 人、{total} 份）")
+    # 本月榜 + 全期累積榜 → 推進 OBS 跑馬燈
+    cur_month = tw_now().strftime("%Y-%m")
+    y, mo = cur_month.split("-")
+    month_label = f"{y}年{int(mo)}月"
+    month_rank = sorted(months.get(cur_month, {}).items(), key=lambda kv: kv[1], reverse=True)[:20]
+    all_acc = {}
+    for mdict in months.values():
+        for name, n in mdict.items():
+            all_acc[name] = all_acc.get(name, 0) + n
+    all_rank = sorted(all_acc.items(), key=lambda kv: kv[1], reverse=True)[:20]
+    try:
+        push_to_overlay(month_label, month_rank, all_rank)
+        print(f"✅ 已推榜到跑馬燈：本月 {len(month_rank)} 人、累積 {len(all_rank)} 人")
+    except Exception as e:
+        print("推榜失敗:", str(e)[:120])
 
 if __name__ == "__main__":
-    print(f"MODE={MODE}")
-    if MODE == "post":
-        post()
-    else:
-        harvest()
+    harvest()
