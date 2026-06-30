@@ -1,1 +1,4 @@
 __pycache__/
+*.db
+x_accounts.db
+x_test.py
