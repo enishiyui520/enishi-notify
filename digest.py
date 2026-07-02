@@ -105,14 +105,17 @@ def gemini_digest(sample):
               "整理出今天大家主要聊了哪些話題、有什麼有趣的梗或討論，"
               "讓沒空看的人快速跟上。只輸出懶人包本文，不要前言。\n\n訊息：\n" + sample[:6000])
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
-                       "generationConfig": {"temperature": 0.6, "maxOutputTokens": 400}}).encode()
+                       "generationConfig": {"temperature": 0.6, "maxOutputTokens": 800,
+                                            "thinkingConfig": {"thinkingBudget": 0}}}).encode()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GKEY}"
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     try:
         r = json.loads(urllib.request.urlopen(req, timeout=60).read())
-        return r["candidates"][0]["content"]["parts"][0]["text"].strip()
+        parts = r["candidates"][0]["content"].get("parts", [])
+        txt = "".join(p.get("text", "") for p in parts).strip()
+        return txt or None
     except Exception as e:
-        print("Gemini 摘要失敗:", str(e)[:160]); return None
+        print("Gemini 摘要失敗:", str(e)[:200]); return None
 
 sample = "\n".join(texts)
 digest = gemini_digest(sample)
@@ -130,7 +133,11 @@ if digest:
 if top_words:
     lines.append("## 🔥 今日熱詞 TOP")
     for i, (w, n) in enumerate(top_words):
-        lines.append(f"{medals[i]} **{w}** ・ {n} 次")
+        ex = next((re.sub(r"\s+", " ", t).strip() for t in texts if w in t and 2 <= len(t.strip()) <= 60), "")
+        if not ex:
+            ex = next((re.sub(r"\s+", " ", t).strip() for t in texts if w in t), "")
+        ex = ex[:28] + ("…" if len(ex) > 28 else "")
+        lines.append(f"{medals[i]} **{w}** ・ {n} 次" + (f"　💬「{ex}」" if ex else ""))
     lines.append("")
 lines.append("（統計過去 24 小時公開頻道 ・ 一起把話題炒熱吧 🎀）")
 post_wh("\n".join(lines))

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """每日表情排行榜：唯讀 bot 讀各文字頻道近 24h 訊息上的表情 → 統計 → 貼到排行榜頻道。
 跑在 GitHub Actions，每天一次。只讀不發（發用 webhook）。"""
-import os, sys, io, json, time, urllib.request, datetime
+import os, sys, io, json, time, re, urllib.request, datetime
 from collections import defaultdict
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -53,6 +53,9 @@ for c in channels:
             em = r.get("emoji", {})
             key = f"<:{em.get('name')}:{em['id']}>" if em.get("id") else (em.get("name") or "?")
             emoji_cnt[key] += cnt
+        # 也算訊息內文裡打的自訂 emoji（不只 reaction）
+        for _n, _id in re.findall(r"<a?:(\w+):(\d+)>", m.get("content") or ""):
+            emoji_cnt[f"<:{_n}:{_id}>"] += 1
     time.sleep(0.3)
 
 if not emoji_cnt:
