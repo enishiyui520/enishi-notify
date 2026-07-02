@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 """緣結 YouTube 通知：用公開 RSS 偵測新片、用 /live 頁偵測開台 → 發到 Discord Webhook。
 跑在 GitHub Actions（免費），狀態存 state.json。第一次跑只記錄不發（避免洗舊內容）。"""
-import os, json, re, html, urllib.request
+import os, sys, json, re, html, urllib.request, subprocess, shutil
+
+# 確保 yt-dlp 可用（不改 workflow 就自動裝；workflow 本來每次就會 pip install，成本相同）
+if shutil.which("yt-dlp") is None:
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "yt-dlp"], timeout=240)
 
 CH = os.environ["YT_CHANNEL_ID"]
 WH_LIVE = os.environ["WEBHOOK_LIVE"]
@@ -25,14 +29,18 @@ except Exception:
     state = {}
 first_run = not state
 
-# --- 開台偵測（/live 頁）---
+# --- 開台偵測（yt-dlp live_status；機房 IP 也可靠，爬網頁會被 YouTube 擋）---
 live_now = None
 try:
-    h = get(f"https://www.youtube.com/channel/{CH}/live")
-    if ('"isLiveNow":true' in h) or ('hlsManifestUrl' in h and '"isLive":true' in h):
-        m = re.search(r'"videoId":"([\w-]+)"', h)
-        if m:
-            live_now = m.group(1)
+    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--skip-download", "--playlist-items", "1",
+                        "--print", "%(id)s\t%(live_status)s",
+                        f"https://www.youtube.com/channel/{CH}/live"],
+                       capture_output=True, text=True, timeout=120)
+    for line in r.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[1] == "is_live":
+            live_now = parts[0]; break
+    print("live check:", r.stdout.strip()[:120] or "(no live)")
 except Exception as e:
     print("live check err:", e)
 

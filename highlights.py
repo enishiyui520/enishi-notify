@@ -3,9 +3,11 @@
  ・Gemini 讀逐字稿 → 本場摘要（懶人包）
  ・聊天爆量時刻 → 熱門時間軸
 合併貼到 Discord。跑在 GitHub Actions，每支只發一次。全程免費。"""
-import os, sys, io, json, re, urllib.request, html as _html
+import os, sys, io, json, re, urllib.request, html as _html, subprocess, glob, tempfile, shutil
 from collections import defaultdict
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+if shutil.which("yt-dlp") is None:   # 自動裝 yt-dlp（不用改 workflow）
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "yt-dlp"], timeout=240)
 from chat_downloader import ChatDownloader
 
 CH = os.environ["YT_CHANNEL_ID"]
@@ -43,7 +45,33 @@ def fetch_transcript(vid):
         segs = YouTubeTranscriptApi.get_transcript(vid, languages=langs)
         return " ".join(s['text'] for s in segs)
     except Exception as e:
-        print("無逐字稿:", str(e)[:120]); return None
+        print("transcript_api 失敗:", str(e)[:100])
+    return fetch_transcript_ytdlp(vid)   # 機房 IP 被擋 → 改用 yt-dlp 自動字幕
+
+def fetch_transcript_ytdlp(vid):
+    """yt-dlp 抓自動字幕（機房 IP 可靠）→ 解析 vtt 純文字。"""
+    try:
+        tmp = tempfile.mkdtemp()
+        subprocess.run(["yt-dlp", "-q", "--no-warnings", "--skip-download",
+                        "--write-auto-sub", "--write-sub", "--sub-lang", "ja,zh-Hant,zh,en",
+                        "--sub-format", "vtt", "-o", f"{tmp}/s.%(ext)s",
+                        f"https://youtu.be/{vid}"], capture_output=True, text=True, timeout=180)
+        vtts = glob.glob(f"{tmp}/*.vtt")
+        if not vtts:
+            print("yt-dlp 也無字幕"); return None
+        seen = set(); words = []
+        for line in open(vtts[0], encoding="utf-8"):
+            line = line.strip()
+            if not line or "-->" in line or line.startswith(("WEBVTT", "Kind:", "Language:")):
+                continue
+            line = re.sub(r"<[^>]+>", "", line)
+            if line and line not in seen:
+                seen.add(line); words.append(line)
+        txt = " ".join(words)
+        print(f"yt-dlp 字幕 {len(txt)} 字")
+        return txt or None
+    except Exception as e:
+        print("yt-dlp 字幕失敗:", str(e)[:100]); return None
 
 def gemini_summary(text):
     if not GKEY or not text:
@@ -78,14 +106,18 @@ if state.get("posted_video") == vid:
     print("已發過:", vid); sys.exit(0)
 
 url = f"https://www.youtube.com/watch?v={vid}"
+# 用 yt-dlp live_status 判斷（機房 IP 爬網頁抓不到 isLiveContent）
 try:
-    page = get(url)
-except Exception:
-    page = ""
-if '"isLiveNow":true' in page:
+    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--skip-download", "--print", "%(live_status)s",
+                        f"https://youtu.be/{vid}"], capture_output=True, text=True, timeout=120)
+    ls = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+except Exception as e:
+    print("live_status err:", e); ls = ""
+print("live_status =", ls)
+if ls == "is_live":
     print("還在直播中，等播完"); sys.exit(0)
-if '"isLiveContent":true' not in page:
-    print("不是直播，略過精華"); state["posted_video"] = vid
+if ls not in ("was_live", "post_live"):   # 一般上片(非直播) → 略過精華
+    print(f"不是直播(live_status={ls})，略過精華"); state["posted_video"] = vid
     json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False); sys.exit(0)
 
 # 已結束的直播 → 產懶人包 + 時間軸
