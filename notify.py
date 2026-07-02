@@ -29,20 +29,30 @@ except Exception:
     state = {}
 first_run = not state
 
-# --- 開台偵測（yt-dlp live_status；機房 IP 也可靠，爬網頁會被 YouTube 擋）---
+# --- 開台偵測 ---
+# 首選 YouTube Data API（機房 IP 也可靠）；沒設 YT_API_KEY 才退回 yt-dlp（機房常被擋）
 live_now = None
-try:
-    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--skip-download", "--playlist-items", "1",
-                        "--print", "%(id)s\t%(live_status)s",
-                        f"https://www.youtube.com/channel/{CH}/live"],
-                       capture_output=True, text=True, timeout=120)
-    for line in r.stdout.strip().splitlines():
-        parts = line.split("\t")
-        if len(parts) == 2 and parts[1] == "is_live":
-            live_now = parts[0]; break
-    print("live check:", r.stdout.strip()[:120] or "(no live)")
-except Exception as e:
-    print("live check err:", e)
+YT_KEY = os.environ.get("YT_API_KEY", "").strip()
+if YT_KEY:
+    try:
+        import yt_api
+        live_now = yt_api.find_live(CH, YT_KEY)
+        print("live check (Data API):", live_now or "(no live)")
+    except Exception as e:
+        print("Data API live check err:", str(e)[:120])
+else:
+    try:
+        r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--skip-download", "--playlist-items", "1",
+                            "--print", "%(id)s\t%(live_status)s",
+                            f"https://www.youtube.com/channel/{CH}/live"],
+                           capture_output=True, text=True, timeout=120)
+        for line in r.stdout.strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) == 2 and parts[1] == "is_live":
+                live_now = parts[0]; break
+        print("live check (yt-dlp fallback):", r.stdout.strip()[:120] or "(no live)")
+    except Exception as e:
+        print("live check err:", e)
 
 if live_now:
     if state.get("live_video") != live_now:

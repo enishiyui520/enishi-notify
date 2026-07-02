@@ -93,38 +93,44 @@ try:
 except Exception:
     state = {}
 
-# 全用 yt-dlp（RSS 在機房 IP 被 YouTube 擋 500/404）：
-# 1) flat 列出最近幾支直播的 ID  2) 批次查 live_status，取第一支「已結束直播」
-ids = []
-try:
-    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--flat-playlist", "-I", "1:6", "--print", "%(id)s",
-                        f"https://www.youtube.com/channel/{CH}/streams"],
-                       capture_output=True, text=True, timeout=120)
-    ids = [x for x in r.stdout.strip().splitlines() if x]
-except Exception as ex:
-    print("列出直播失敗:", str(ex)[:100])
-if not ids:
-    print("抓不到直播清單，等下次"); sys.exit(0)
-
-vid = title = ls = ""
-try:
-    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--ignore-errors", "--skip-download",
-                        "--print", "%(id)s\t%(live_status)s\t%(title)s", *ids],
-                       capture_output=True, text=True, timeout=220)
-    for line in r.stdout.strip().splitlines():
-        p = line.split("\t")
-        if len(p) >= 2 and p[1] in ("was_live", "post_live"):   # 跳過未來排程(is_upcoming)/直播中(is_live)
-            vid, ls, title = p[0], p[1], (p[2] if len(p) > 2 else ""); break
-except Exception as ex:
-    print("查直播狀態失敗:", str(ex)[:100])
+# 找最近一支「已結束直播」。首選 YouTube Data API（機房 IP 可靠）；沒 key 退回 yt-dlp
+vid = title = ""
+YT_KEY = os.environ.get("YT_API_KEY", "").strip()
+if YT_KEY:
+    try:
+        import yt_api
+        vid, title = yt_api.find_latest_ended_stream(CH, YT_KEY)
+        print("latest ended stream (Data API):", vid, "|", (title or "")[:40])
+    except Exception as ex:
+        print("Data API 查直播失敗:", str(ex)[:120])
+if not vid:   # 退回 yt-dlp：flat 列 ID + --ignore-errors 批次查 live_status
+    ids = []
+    try:
+        r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--flat-playlist", "-I", "1:6", "--print", "%(id)s",
+                            f"https://www.youtube.com/channel/{CH}/streams"],
+                           capture_output=True, text=True, timeout=120)
+        ids = [x for x in r.stdout.strip().splitlines() if x]
+    except Exception as ex:
+        print("列出直播失敗:", str(ex)[:100])
+    try:
+        if ids:
+            r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--ignore-errors", "--skip-download",
+                                "--print", "%(id)s\t%(live_status)s\t%(title)s", *ids],
+                               capture_output=True, text=True, timeout=220)
+            for line in r.stdout.strip().splitlines():
+                p = line.split("\t")
+                if len(p) >= 2 and p[1] in ("was_live", "post_live"):
+                    vid, title = p[0], (p[2] if len(p) > 2 else ""); break
+    except Exception as ex:
+        print("yt-dlp 查直播狀態失敗:", str(ex)[:100])
 if not vid:
-    print("目前沒有已結束的直播（可能還在直播中或只有排程），略過"); sys.exit(0)
+    print("目前沒有已結束的直播（可能還在直播中或只有排程/機房被擋），略過"); sys.exit(0)
 
 if state.get("posted_video") == vid:
     print("已發過:", vid); sys.exit(0)
 
 url = f"https://www.youtube.com/watch?v={vid}"
-print("latest ended stream =", vid, "| live_status =", ls, "|", title[:40])
+print("處理直播:", vid, "|", (title or "")[:40])
 
 # 已結束的直播 → 產懶人包 + 時間軸
 summary = gemini_summary(fetch_transcript(vid))
