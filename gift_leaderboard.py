@@ -8,7 +8,7 @@
 import os, sys, io, json, re, time, datetime, urllib.request
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-CH = os.environ["YT_CHANNEL_ID"]
+CH = os.environ["YT_CHANNEL_ID"].split("|")[0].strip()   # 可能夾帶 |APIKEY，只取頻道 ID
 WORKER_URL = os.environ["WORKER_DONATE_URL"].rstrip("/")  # 例 https://enishi-donate.enishi-yui.workers.dev
 DONATE_SECRET = os.environ["DONATE_SECRET"]
 STATE_FILE = "gift_state.json"
