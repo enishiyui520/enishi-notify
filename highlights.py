@@ -93,40 +93,38 @@ try:
 except Exception:
     state = {}
 
-# RSS 抓最新影片（機房 IP 偶發 404 → 重試幾次；RSS 不含未來排程的佔位直播，剛好）
-xml = None
-for attempt in range(4):
-    try:
-        xml = get(f"https://www.youtube.com/feeds/videos.xml?channel_id={CH}"); break
-    except Exception as ex:
-        print(f"RSS 第{attempt+1}次失敗:", str(ex)[:60]); time.sleep(3)
-if not xml:
-    print("RSS 取不到，等下次重試"); sys.exit(0)
-ent = re.search(r"<entry>(.*?)</entry>", xml, re.S)
-if not ent:
-    print("沒有影片"); sys.exit(0)
-e = ent.group(1)
-vid = re.search(r"<yt:videoId>([\w-]+)</yt:videoId>", e).group(1)
-tm = re.search(r"<title>(.*?)</title>", e)
-title = _html.unescape(tm.group(1)) if tm else ""
+# 全用 yt-dlp（RSS 在機房 IP 被 YouTube 擋 500/404）：
+# 1) flat 列出最近幾支直播的 ID  2) 批次查 live_status，取第一支「已結束直播」
+ids = []
+try:
+    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--flat-playlist", "-I", "1:6", "--print", "%(id)s",
+                        f"https://www.youtube.com/channel/{CH}/streams"],
+                       capture_output=True, text=True, timeout=120)
+    ids = [x for x in r.stdout.strip().splitlines() if x]
+except Exception as ex:
+    print("列出直播失敗:", str(ex)[:100])
+if not ids:
+    print("抓不到直播清單，等下次"); sys.exit(0)
+
+vid = title = ls = ""
+try:
+    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--ignore-errors", "--skip-download",
+                        "--print", "%(id)s\t%(live_status)s\t%(title)s", *ids],
+                       capture_output=True, text=True, timeout=220)
+    for line in r.stdout.strip().splitlines():
+        p = line.split("\t")
+        if len(p) >= 2 and p[1] in ("was_live", "post_live"):   # 跳過未來排程(is_upcoming)/直播中(is_live)
+            vid, ls, title = p[0], p[1], (p[2] if len(p) > 2 else ""); break
+except Exception as ex:
+    print("查直播狀態失敗:", str(ex)[:100])
+if not vid:
+    print("目前沒有已結束的直播（可能還在直播中或只有排程），略過"); sys.exit(0)
 
 if state.get("posted_video") == vid:
     print("已發過:", vid); sys.exit(0)
 
 url = f"https://www.youtube.com/watch?v={vid}"
-# yt-dlp live_status 判斷（機房 IP 爬網頁抓不到 isLiveContent）
-try:
-    r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--skip-download", "--print", "%(live_status)s",
-                        f"https://youtu.be/{vid}"], capture_output=True, text=True, timeout=120)
-    ls = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
-except Exception as ex:
-    print("live_status err:", ex); ls = ""
-print("latest =", vid, "| live_status =", ls)
-if ls == "is_live":
-    print("還在直播中，等播完"); sys.exit(0)
-if ls not in ("was_live", "post_live"):   # 一般上片(非直播) → 略過精華
-    print(f"不是直播(live_status={ls})，略過精華"); state["posted_video"] = vid
-    json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False); sys.exit(0)
+print("latest ended stream =", vid, "| live_status =", ls, "|", title[:40])
 
 # 已結束的直播 → 產懶人包 + 時間軸
 summary = gemini_summary(fetch_transcript(vid))
