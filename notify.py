@@ -7,7 +7,11 @@ import os, sys, json, re, html, urllib.request, subprocess, shutil
 if shutil.which("yt-dlp") is None:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "yt-dlp"], timeout=240)
 
-CH = os.environ["YT_CHANNEL_ID"]
+# YT_CHANNEL_ID 可為「UCxxx」或「UCxxx|APIKEY」(把 Data API key 夾帶進來，免改 workflow)
+_cid = os.environ["YT_CHANNEL_ID"]
+CH = _cid.split("|")[0].strip()
+YT_KEY = (os.environ.get("YT_API_KEY", "").strip()
+          or (_cid.split("|", 1)[1].strip() if "|" in _cid else ""))
 WH_LIVE = os.environ["WEBHOOK_LIVE"]
 WH_UPLOAD = os.environ["WEBHOOK_UPLOAD"]
 PING_LIVE = os.environ.get("PING_LIVE", "").strip()
@@ -30,9 +34,8 @@ except Exception:
 first_run = not state
 
 # --- 開台偵測 ---
-# 首選 YouTube Data API（機房 IP 也可靠）；沒設 YT_API_KEY 才退回 yt-dlp（機房常被擋）
+# 首選 YouTube Data API（機房 IP 也可靠）；沒 key 才退回 yt-dlp（機房常被擋）
 live_now = None
-YT_KEY = os.environ.get("YT_API_KEY", "").strip()
 if YT_KEY:
     try:
         import yt_api

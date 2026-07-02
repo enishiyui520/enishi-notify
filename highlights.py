@@ -10,7 +10,11 @@ if shutil.which("yt-dlp") is None:   # 自動裝 yt-dlp（不用改 workflow）
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "yt-dlp"], timeout=240)
 from chat_downloader import ChatDownloader
 
-CH = os.environ["YT_CHANNEL_ID"]
+# YT_CHANNEL_ID 可為「UCxxx」或「UCxxx|APIKEY」(夾帶 Data API key，免改 workflow)
+_cid = os.environ["YT_CHANNEL_ID"]
+CH = _cid.split("|")[0].strip()
+YT_KEY = (os.environ.get("YT_API_KEY", "").strip()
+          or (_cid.split("|", 1)[1].strip() if "|" in _cid else ""))
 WH = os.environ["WEBHOOK_HL"]
 GKEY = os.environ.get("GEMINI_API_KEY", "")
 STATE = "highlights_state.json"
@@ -95,7 +99,6 @@ except Exception:
 
 # 找最近一支「已結束直播」。首選 YouTube Data API（機房 IP 可靠）；沒 key 退回 yt-dlp
 vid = title = ""
-YT_KEY = os.environ.get("YT_API_KEY", "").strip()
 if YT_KEY:
     try:
         import yt_api
