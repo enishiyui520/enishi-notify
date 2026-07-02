@@ -138,9 +138,44 @@ print("處理直播:", vid, "|", (title or "")[:40])
 # 已結束的直播 → 產懶人包 + 時間軸
 summary = gemini_summary(fetch_transcript(vid))
 
+def yt_live_chat(_vid):
+    """用 yt-dlp 下載 live chat replay（住宅 IP 可靠、chat_downloader 已壞）→ yield {time_in_seconds, message}。"""
+    d = tempfile.mkdtemp()
+    try:
+        subprocess.run([sys.executable, "-m", "yt_dlp", "-q", "--no-warnings", "--skip-download",
+                        "--write-subs", "--sub-langs", "live_chat",
+                        "-o", os.path.join(d, "%(id)s.%(ext)s"),
+                        f"https://www.youtube.com/watch?v={_vid}"], timeout=600)
+        fs = glob.glob(os.path.join(d, "*.live_chat.json"))
+        if not fs:
+            return
+        for line in open(fs[0], encoding="utf-8"):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            rc = o.get("replayChatItemAction") or {}
+            off = rc.get("videoOffsetTimeMsec")
+            if off is None:
+                continue
+            ts = int(off) / 1000.0
+            for a in rc.get("actions", []):
+                item = (a.get("addChatItemAction") or {}).get("item") or {}
+                r = item.get("liveChatTextMessageRenderer")
+                if not r:
+                    continue
+                runs = (r.get("message") or {}).get("runs", [])
+                mtext = "".join(run.get("text", "") for run in runs).strip()
+                yield {"time_in_seconds": ts, "message": mtext}
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
 bins = defaultdict(int); samples = defaultdict(list); n = 0
 try:
-    for m in ChatDownloader().get_chat(url):
+    for m in yt_live_chat(vid):
         t = m.get("time_in_seconds")
         if t is None or t < 0:
             continue
