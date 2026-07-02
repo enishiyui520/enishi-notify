@@ -3,7 +3,7 @@
  ・Gemini 讀逐字稿 → 本場摘要（懶人包）
  ・聊天爆量時刻 → 熱門時間軸
 合併貼到 Discord。跑在 GitHub Actions，每支只發一次。全程免費。"""
-import os, sys, io, json, re, urllib.request, html as _html, subprocess, glob, tempfile, shutil
+import os, sys, io, json, re, urllib.request, html as _html, subprocess, glob, tempfile, shutil, time
 from collections import defaultdict
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 if shutil.which("yt-dlp") is None:   # 自動裝 yt-dlp（不用改 workflow）
@@ -93,7 +93,15 @@ try:
 except Exception:
     state = {}
 
-xml = get(f"https://www.youtube.com/feeds/videos.xml?channel_id={CH}")
+# RSS 抓最新影片（機房 IP 偶發 404 → 重試幾次；RSS 不含未來排程的佔位直播，剛好）
+xml = None
+for attempt in range(4):
+    try:
+        xml = get(f"https://www.youtube.com/feeds/videos.xml?channel_id={CH}"); break
+    except Exception as ex:
+        print(f"RSS 第{attempt+1}次失敗:", str(ex)[:60]); time.sleep(3)
+if not xml:
+    print("RSS 取不到，等下次重試"); sys.exit(0)
 ent = re.search(r"<entry>(.*?)</entry>", xml, re.S)
 if not ent:
     print("沒有影片"); sys.exit(0)
@@ -106,14 +114,14 @@ if state.get("posted_video") == vid:
     print("已發過:", vid); sys.exit(0)
 
 url = f"https://www.youtube.com/watch?v={vid}"
-# 用 yt-dlp live_status 判斷（機房 IP 爬網頁抓不到 isLiveContent）
+# yt-dlp live_status 判斷（機房 IP 爬網頁抓不到 isLiveContent）
 try:
     r = subprocess.run(["yt-dlp", "-q", "--no-warnings", "--skip-download", "--print", "%(live_status)s",
                         f"https://youtu.be/{vid}"], capture_output=True, text=True, timeout=120)
     ls = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
-except Exception as e:
-    print("live_status err:", e); ls = ""
-print("live_status =", ls)
+except Exception as ex:
+    print("live_status err:", ex); ls = ""
+print("latest =", vid, "| live_status =", ls)
 if ls == "is_live":
     print("還在直播中，等播完"); sys.exit(0)
 if ls not in ("was_live", "post_live"):   # 一般上片(非直播) → 略過精華
