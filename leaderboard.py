@@ -8,6 +8,9 @@ import os, sys, io, json, time, re, urllib.request, urllib.error, datetime
 from urllib.parse import quote
 from collections import defaultdict
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+# GitHub 自己的排程 cron 時間會飄 → 忽略它，只在被主動觸發(dispatch)時跑；由雲端定時器準時 23:30(台灣) 觸發
+if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
+    print("skip scheduled run（改由雲端 23:30 觸發）"); sys.exit(0)
 
 TOK = os.environ["STATS_BOT_TOKEN"]
 WH = os.environ["WEBHOOK_LB"]
