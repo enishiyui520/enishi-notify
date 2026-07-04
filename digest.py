@@ -5,7 +5,7 @@
    ③ 熱詞排行（jieba 斷詞，附一句真實聊天例子）
    ④ 今日神明裁決（實習神緣結的搞笑蓋章）
    貼到 📊每日回顧頻道。跑在 GitHub Actions，每天一次。只讀不發言（發用 webhook）。"""
-import os, sys, io, json, time, re, base64, urllib.request, urllib.error, datetime
+import os, sys, io, json, time, re, urllib.request, urllib.error, datetime
 from collections import Counter, defaultdict
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 # GitHub 自己的排程 cron 時間會飄 → 忽略它，只在被主動觸發(dispatch)時跑；由雲端定時器準時 23:30(台灣) 觸發
@@ -147,59 +147,6 @@ verdict = gemini("你是結緣神社的實習神明『緣結』（可愛、俏�
 
 terms = hot_terms(sample)
 
-# ---------- 今日最佳梗圖 + 梗圖王（梗圖區）----------
-MEME_CH = "1518812041220067419"
-IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp")
-
-def explain_meme(img_url):
-    """Gemini 視覺猜這張梗圖在玩什麼哏（只看得到圖、標明是猜測）。1 張/日 成本 ~$0.001。"""
-    if not GKEY:
-        return ""
-    try:
-        raw = urllib.request.urlopen(urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"}), timeout=30).read()
-        if len(raw) > 4_000_000:
-            return ""
-        low = img_url.lower().split("?")[0]
-        mime = "image/jpeg" if (low.endswith(".jpg") or low.endswith(".jpeg")) else \
-               "image/gif" if low.endswith(".gif") else "image/webp" if low.endswith(".webp") else "image/png"
-        prompt = ("這是社群今天最多人按表情的梗圖。用繁體中文猜這張圖在玩什麼哏、為什麼好笑，2~3 句。"
-                  "你只看得到圖、不知道當下語境，所以開頭要說明這是你的猜測。")
-        body = json.dumps({"contents": [{"parts": [{"inline_data": {"mime_type": mime, "data": base64.b64encode(raw).decode()}}, {"text": prompt}]}],
-                           "generationConfig": {"temperature": 0.6, "maxOutputTokens": 300, "thinkingConfig": {"thinkingBudget": 0}}}).encode()
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GKEY}"
-        r = json.loads(urllib.request.urlopen(urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}), timeout=60).read())
-        return "".join(p.get("text", "") for p in r["candidates"][0]["content"].get("parts", [])).strip()
-    except Exception as e:
-        print("梗圖解讀失敗:", str(e)[:150]); return ""
-
-best_meme = None
-meme_post = defaultdict(int); meme_name = {}
-for m in (get(f"/channels/{MEME_CH}/messages?limit=100") or []):
-    try:
-        ts = datetime.datetime.fromisoformat(m["timestamp"])
-    except Exception:
-        continue
-    if ts < cutoff:
-        continue
-    au = m.get("author", {})
-    if au.get("bot"):
-        continue
-    img = None
-    for a in (m.get("attachments") or []):
-        if (a.get("content_type") or "").startswith("image") or (a.get("filename") or "").lower().endswith(IMG_EXT):
-            img = a.get("url"); break
-    if not img:
-        for e in (m.get("embeds") or []):
-            if (e.get("image") or {}).get("url"):
-                img = e["image"]["url"]; break
-    if not img:
-        continue
-    aid = au.get("id"); meme_post[aid] += 1
-    meme_name[aid] = au.get("global_name") or au.get("username") or "?"
-    rc = sum(r.get("count", 0) for r in (m.get("reactions") or []))
-    if best_meme is None or rc > best_meme["rc"]:
-        best_meme = {"rc": rc, "img": img, "jump": f"https://discord.com/channels/{GUILD}/{MEME_CH}/{m['id']}", "by": meme_name[aid]}
-
 # ---------- 組訊息 ----------
 medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
 date_str = (now + datetime.timedelta(hours=8)).strftime("%m/%d")
@@ -226,19 +173,6 @@ if terms:
 if verdict:
     lines.append("## 🔮 今日神明裁決")
     lines.append("> " + verdict + "　― 緣結 🎀")
-    lines.append("")
-if best_meme and best_meme["rc"] > 0:
-    lines.append("## 🏆 今日最佳梗圖")
-    lines.append(f"由 **{best_meme['by']}** 提供 ・ 被按 **{best_meme['rc']}** 個表情 🔥")
-    lines.append(best_meme["jump"])
-    ex = explain_meme(best_meme["img"])
-    if ex:
-        lines.append(f"🤖 {ex}")
-    lines.append("")
-if meme_post:
-    king = max(meme_post.items(), key=lambda kv: kv[1])
-    lines.append("## 🎨 今日梗圖王")
-    lines.append(f"感謝 **{meme_name[king[0]]}** 今天貢獻 **{king[1]}** 張梗圖，讓大家笑不停 🎉")
     lines.append("")
 lines.append("（統計過去 24 小時公開頻道 ・ 一起把話題炒熱吧 🎀）")
 post_wh("\n".join(lines))
