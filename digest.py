@@ -177,3 +177,17 @@ if verdict:
 lines.append("（統計過去 24 小時公開頻道 ・ 一起把話題炒熱吧 🎀）")
 post_wh("\n".join(lines))
 print(f"✅ 已發每日回顧（{msg_count} 則、{len(active_users)} 人、聊天高手 {len(top_chat)}、關鍵詞 {len(terms)}、懶人包 {'有' if digest else '無'}、裁決 {'有' if verdict else '無'}）")
+
+# ---------- 發「緣」：每則留言 +1，每日上限 30（批次、一天一次）----------
+def grant_yuan(grants):
+    grants = {u: v for u, v in grants.items() if v > 0}
+    if not grants:
+        return
+    try:
+        body = json.dumps({"grants": grants}).encode()
+        req = urllib.request.Request("https://enishi-omikuji.enishi-yui.workers.dev/?loyalty=enishi-loyalty-2026",
+                                     data=body, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+        print("💫 發緣(留言):", json.loads(urllib.request.urlopen(req, timeout=30).read()))
+    except Exception as e:
+        print("發緣失敗:", str(e)[:150])
+grant_yuan({uid: min(n, 30) for uid, n in author_msg.items()})

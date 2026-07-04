@@ -132,3 +132,17 @@ if top_emoji:
 lines.append("\n（統計過去 24 小時 ・ 多按表情幫朋友上榜吧 🎀）")
 post_wh("\n".join(lines))
 print(f"✅ 已發表情排行（表情王 {len(top_give)}、人氣王 {len(top_recv)}、熱門表情 {len(top_emoji)}、reaction呼叫 {_react_calls}）")
+
+# ---------- 發「緣」：給別人按一個表情 +1，每日上限 10（批次）----------
+def grant_yuan(grants):
+    grants = {u: v for u, v in grants.items() if v > 0}
+    if not grants:
+        return
+    try:
+        body = json.dumps({"grants": grants}).encode()
+        req = urllib.request.Request("https://enishi-omikuji.enishi-yui.workers.dev/?loyalty=enishi-loyalty-2026",
+                                     data=body, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+        print("💫 發緣(表情):", json.loads(urllib.request.urlopen(req, timeout=30).read()))
+    except Exception as e:
+        print("發緣失敗:", str(e)[:150])
+grant_yuan({uid: min(n, 10) for uid, n in author_give.items()})
