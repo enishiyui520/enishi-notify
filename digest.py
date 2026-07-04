@@ -93,26 +93,9 @@ def clean(s):
     s = EMOJI_RE.sub("", s); s = re.sub(r"https?://\S+", "", s); s = UNI_RE.sub("", s)
     return re.sub(r"\s+", " ", s).strip()
 
-# ---------- 熱詞排行 ----------
-STOP = set("的 了 是 我 你 他 她 也 在 就 都 而 及 與 著 或 一個 沒有 我們 你們 他們 自己 這個 那個 "
-           "什麼 怎麼 這樣 那樣 可以 不會 真的 好像 但是 所以 因為 如果 還是 已經 一直 這麼 那麼 "
-           "覺得 知道 應該 不要 不過 然後 現在 大家 有點 一下 喔 喎 啦 啊 嗎 呢 吧 唉 欸 哈哈 笑死 "
-           "https http com www 圖片 貼圖 表情 一樣 比較 還有 為什麼 真是 有沒有".split())
-try:
-    import jieba
-    jieba.setLogLevel(20)
-    words = []
-    for t in texts:
-        for w in jieba.cut(clean(t)):
-            w = w.strip()
-            if len(w) < 2 or w in STOP:
-                continue
-            if re.fullmatch(r"[\W\d_]+", w):
-                continue
-            words.append(w)
-    top_words = Counter(words).most_common(8)
-except Exception as e:
-    print("jieba 失敗:", str(e)[:120]); top_words = []
+# ---------- 今日社群關鍵詞（AI 濃縮，取代純詞頻的熱詞排行）----------
+# 舊版 jieba 詞頻會抓到「不是/就是」這種無意義詞、也會被遊戲用語洗版。
+# 改由 Gemini 讀當天聊天 → 抓 1~3 個真正有意義的社群用語/梗/話題 + 一句解釋 + 為何今天在講。
 
 # ---------- Gemini ----------
 def gemini(prompt, max_tokens=800):
@@ -130,6 +113,29 @@ def gemini(prompt, max_tokens=800):
     except Exception as e:
         print("Gemini 失敗:", str(e)[:200]); return None
 
+def hot_terms(sample_text):
+    """AI 抓當天最有代表性的 1~3 個社群用語/梗 + 一句解釋（抓觀眾脈絡邏輯）。"""
+    if not GKEY:
+        return []
+    prompt = ("以下是 VTuber 緣結 Discord 社群今天的聊天。找出今天最能代表社群的 1~3 個「關鍵用語/梗/話題」，"
+              "要有意義：社群黑話、迷因梗、當天反覆出現的主題、動漫或遊戲哏都行。"
+              "嚴禁選『不是/就是/這個/真的/哈哈/沒有』這種無意義常用詞。"
+              "每個用一句話解釋它的意思＋為什麼今天大家在講（抓社群當下的脈絡邏輯）。"
+              "若今天沒有明顯的社群用語，terms 給空陣列。只輸出 JSON：\n"
+              '{"terms":[{"term":"用語","explain":"一句話解釋＋今天為何在講"}]}\n\n聊天：\n' + sample_text)
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
+                       "generationConfig": {"temperature": 0.5, "maxOutputTokens": 600,
+                                            "responseMimeType": "application/json",
+                                            "thinkingConfig": {"thinkingBudget": 0}}}).encode()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GKEY}"
+    try:
+        r = json.loads(urllib.request.urlopen(urllib.request.Request(url, data=body,
+            headers={"Content-Type": "application/json"}), timeout=60).read())
+        txt = "".join(p.get("text", "") for p in r["candidates"][0]["content"].get("parts", [])).strip()
+        return (json.loads(txt).get("terms") or [])[:3]
+    except Exception as e:
+        print("社群關鍵詞 AI 失敗:", str(e)[:150]); return []
+
 sample = "\n".join(texts)[:6000]
 digest = gemini("以下是 VTuber 緣結 Discord 社群今天的聊天訊息（隨機節選）。"
                 "請用繁體中文寫一段 100~150 字的「今日懶人包」，輕鬆親切口吻，"
@@ -138,6 +144,8 @@ digest = gemini("以下是 VTuber 緣結 Discord 社群今天的聊天訊息（�
 verdict = gemini("你是結緣神社的實習神明『緣結』（可愛、俏皮、偶爾吐槽）。看完信徒今天的聊天，"
                  "用一句話（35 字內）幽默地下一個『今日神明裁決』，可以蓋章認證或吐槽今天的氣氛。"
                  "只輸出那句裁決本文，不要引號、不要前言。\n\n聊天：\n" + sample, 200)
+
+terms = hot_terms(sample)
 
 # ---------- 組訊息 ----------
 medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
@@ -155,12 +163,12 @@ if top_chat:
     for i, (aid, n) in enumerate(top_chat):
         lines.append(f"{medals[i]} {author_name.get(aid, '?')} ・ {n} 則")
     lines.append("")
-if top_words:
-    lines.append("## 🔥 今日熱詞 TOP")
-    for i, (w, n) in enumerate(top_words):
-        cands = [e for e in (clean(t) for t in texts if w in t) if len(e) >= 2]
-        ex = (cands[0][:26] + "…") if cands and len(cands[0]) > 26 else (cands[0] if cands else "")
-        lines.append(f"{medals[i]} **{w}** ・ {n} 次" + (f"　💬「{ex}」" if ex else ""))
+if terms:
+    lines.append("## 🗣️ 今日社群關鍵詞")
+    for t in terms:
+        term = (t.get("term") or "").strip(); ex = (t.get("explain") or "").strip()
+        if term:
+            lines.append(f"**「{term}」** ― {ex}" if ex else f"**「{term}」**")
     lines.append("")
 if verdict:
     lines.append("## 🔮 今日神明裁決")
@@ -168,4 +176,4 @@ if verdict:
     lines.append("")
 lines.append("（統計過去 24 小時公開頻道 ・ 一起把話題炒熱吧 🎀）")
 post_wh("\n".join(lines))
-print(f"✅ 已發每日回顧（{msg_count} 則、{len(active_users)} 人、聊天高手 {len(top_chat)}、熱詞 {len(top_words)}、懶人包 {'有' if digest else '無'}、裁決 {'有' if verdict else '無'}）")
+print(f"✅ 已發每日回顧（{msg_count} 則、{len(active_users)} 人、聊天高手 {len(top_chat)}、關鍵詞 {len(terms)}、懶人包 {'有' if digest else '無'}、裁決 {'有' if verdict else '無'}）")
