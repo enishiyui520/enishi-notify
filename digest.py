@@ -191,3 +191,48 @@ def grant_yuan(grants):
     except Exception as e:
         print("發緣失敗:", str(e)[:150])
 grant_yuan({uid: min(n, 30) for uid, n in author_msg.items()})
+
+# ---------- 社群頭目：把當天閒聊懶人包 → 隔天共鬥頭目（安全 fail-closed）----------
+_GEM_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GKEY}"
+
+def _gem_json(prompt, temp=0.8, maxtok=600):
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
+                       "generationConfig": {"temperature": temp, "maxOutputTokens": maxtok,
+                                            "responseMimeType": "application/json", "thinkingConfig": {"thinkingBudget": 0}}}).encode()
+    r = json.loads(urllib.request.urlopen(urllib.request.Request(_GEM_URL, data=body, headers={"Content-Type": "application/json"}), timeout=60).read())
+    return json.loads("".join(p.get("text", "") for p in r["candidates"][0]["content"].get("parts", [])).strip())
+
+def gen_community_boss(summary):
+    if not GKEY or not summary:
+        return
+    prompt = (
+        "你是「緣結」——可愛俏皮、中日混雜的實習結緣神 VTuber，帶社群打倒「心魔」。"
+        "任務：把「昨天社群閒聊懶人包」變成「今天大家一起共鬥的頭目」。頭目＝把大家共通生活煩惱擬人化的笨萌小妖怪。\n"
+        "【調性】頭目是『情緒/現象』擬人化，**永遠不是某個人**。命名用 XX魔/獸/君/醬。可愛療癒笨萌、不邪惡。對事不對人，選多數人有共感的煩惱（賴床/拖延/熬夜/爆肝/選擇困難/emo/社恐…）。緣結口吻俏皮、結尾溫柔，繁體台灣中文可少量日文語助詞(なの/だよ/よし)，禁中國大陸用語。\n"
+        "【安全規則(最高優先)】絕不能變頭目：①點名或影射真實個人 ②社群吵架衝突公審糾紛 ③政治時事兩岸選舉宗教 ④色情低俗獵奇 ⑤仇恨歧視 ⑥自傷心理危機 ⑦個資隱私爆料 ⑧違法。\n"
+        "★★最重要：**若這個煩惱是從『有人抱怨/嫌棄某人的行為』或『吵架』來的**（例如嫌某人遲到、某人做錯事、誰又怎樣）——**絕對不要做成那個行為的頭目**（那等於指著當事人罵）。這種情況要嘛抽象成**跟那件事完全無關**的通用煩惱、要嘛直接 safe=false。\n"
+        "處理階梯：A.抽象化(首選)：剝掉人事時地、只留跟衝突無關的共通情緒。B.太敏感無法安全抽象化→safe=false。C.自傷或針對個人霸凌→safe=false 且 reason=need_human_review。絕不重述影射敏感原文。寧可頭目普通也不可傷人。\n"
+        '只輸出JSON：{"boss_name":"","backstory":"80~150字緣結口吻故事","defeat_line":"被打倒台詞一句笨萌釋懷+溫柔收尾","safe":true或false,"reason":"safe=false時原因否則ok"}\n\n'
+        "昨天閒聊懶人包：\n<<<\n" + summary + "\n>>>")
+    try:
+        d = _gem_json(prompt, temp=0.8, maxtok=600)
+    except Exception as e:
+        print("社群頭目生成失敗、改用隨機頭目:", str(e)[:150]); return
+    if not d.get("safe") or not d.get("boss_name"):
+        print("社群頭目未過自評(fail-closed)、改用隨機頭目:", d.get("reason", "?")); return
+    # Gate 1：獨立審核（自評太寬鬆、再獨立判一次、fail-closed）
+    try:
+        rev = _gem_json("你是嚴格的內容安全審核員。判斷這個要公開到社群遊戲的頭目是否**可能**：①指向/影射某真實個人或某人的行為(即使沒點名) ②源自社群吵架/衝突/抱怨某人 ③涉政治/色情/仇恨/自傷/個資/違法。**只要它讀起來像在講「某個人做了什麼」而不是「大家共通的煩惱」，就 block**。寧可從嚴。只輸出JSON：{\"block\":true或false,\"why\":\"\"}\n"
+                        f"頭目名：{d['boss_name']}\n故事：{d.get('backstory','')}\n彩蛋：{d.get('defeat_line','')}", temp=0, maxtok=150)
+        if rev.get("block"):
+            print("社群頭目 Gate1 擋下、改用隨機頭目:", rev.get("why", "?")); return
+    except Exception as e:
+        print("社群頭目 Gate1 審核失敗(fail-closed)、改用隨機頭目:", str(e)[:120]); return
+    boss = {"name": d["boss_name"], "story": d.get("backstory", ""), "egg": d.get("defeat_line", "")}
+    try:
+        req = urllib.request.Request("https://enishi-omikuji.enishi-yui.workers.dev/?comboss=enishi-loyalty-2026",
+                                     data=json.dumps(boss).encode(), headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+        print("🔮 社群頭目已生成:", boss["name"], "|", json.loads(urllib.request.urlopen(req, timeout=30).read()))
+    except Exception as e:
+        print("社群頭目 POST 失敗:", str(e)[:150])
+gen_community_boss(digest)
