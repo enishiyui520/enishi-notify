@@ -4,6 +4,12 @@
  ・聊天爆量時刻 → 熱門時間軸
 合併貼到 Discord。跑在 GitHub Actions，每支只發一次。全程免費。"""
 import os, sys, io, json, re, urllib.request, html as _html, subprocess, glob, tempfile, shutil, time
+if os.name == "nt":  # Windows 本機排程用 pythonw 時，讓所有子程序(yt-dlp)不彈黑視窗
+    _sprun = subprocess.run
+    def _run_nw(*a, **k):
+        k["creationflags"] = k.get("creationflags", 0) | 0x08000000  # CREATE_NO_WINDOW
+        return _sprun(*a, **k)
+    subprocess.run = _run_nw
 from collections import defaultdict
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 if shutil.which("yt-dlp") is None:   # 自動裝 yt-dlp（不用改 workflow）
@@ -24,11 +30,22 @@ def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (enishi-notify)"})
     return urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "ignore")
 
-def post(content):
+def _post_one(content):
     body = json.dumps({"content": content[:1990]}).encode()
     req = urllib.request.Request(WH, data=body, headers={
         "Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (enishi-notify)"})
     urllib.request.urlopen(req, timeout=30)
+
+def post(content):
+    # 超過 1900 字就依行分段多發（避免被截斷）
+    buf = ""
+    for line in content.split("\n"):
+        if len(buf) + len(line) + 1 > 1900:
+            if buf: _post_one(buf); time.sleep(0.6)
+            buf = line
+        else:
+            buf = (buf + "\n" + line) if buf else line
+    if buf: _post_one(buf)
 
 def fmt(sec):
     sec = int(sec); h = sec // 3600; m = (sec % 3600) // 60; s = sec % 60
@@ -77,20 +94,32 @@ def fetch_transcript_ytdlp(vid):
     except Exception as e:
         print("yt-dlp 字幕失敗:", str(e)[:100]); return None
 
-def gemini_summary(text):
-    if not GKEY or not text:
-        return None
-    prompt = ("你是緣結直播的懶人包小編。根據以下直播逐字稿，用繁體中文寫一段「本場重點摘要」，"
-              "150 字內、口語、像朋友轉述、不分行不條列不加前綴。只寫實際發生的內容，嚴禁捏造。\n\n逐字稿：\n" + text[:200000])
+def gemini_recap(transcript, chat_sample, title):
+    """回 {summary, learned[]}。有逐字稿用逐字稿；沒有就用聊天室推測。"""
+    if not GKEY:
+        return {}
+    ctx = ("背景：緣結是一位中日混雜的日本 VTuber（會中文也會日文、常常中日夾雜），觀眾中日都有。"
+           f"這場直播標題：{title}。**請完全依照下面的逐字稿／聊天內容，判斷她今天實際在做什麼**（可能是雜談、歌回、玩某款遊戲、閒聊…）。"
+           "絕對不要預設任何遊戲或主題、不要腦補沒發生的事——標題有『歌』多半是歌回、有明確遊戲名才是玩該遊戲，一切以實際內容為準。"
+           "逐字稿與聊天可能中日混雜，這是正常的、不要當亂碼。")
+    if transcript:
+        src = "【逐字稿（緣結說的話，可能中日夾雜）】\n" + transcript[:120000]
+    else:
+        src = "（這場沒抓到逐字稿，改用聊天室內容推測本場氛圍與內容）\n【聊天室片段】\n" + (chat_sample or "")[:20000]
+    prompt = (ctx + "\n\n只輸出 JSON（繁體中文），格式：\n"
+              '{"summary":"本場總結，150字內、口語像朋友轉述、只寫實際發生的、嚴禁捏造",'
+              '"learned":["這場學到/出現的重點，3~5條，例如日文詞或用法、遊戲劇情、雙語有趣點、梗，每條15字內"]}\n\n'
+              + src)
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
-                       "generationConfig": {"temperature": 0.4, "maxOutputTokens": 400}}).encode()
+                       "generationConfig": {"temperature": 0.4, "maxOutputTokens": 900,
+                                            "responseMimeType": "application/json", "thinkingConfig": {"thinkingBudget": 0}}}).encode()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GKEY}"
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
     try:
         r = json.loads(urllib.request.urlopen(req, timeout=120).read())
-        return r["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return json.loads(r["candidates"][0]["content"]["parts"][0]["text"].strip())
     except Exception as e:
-        print("Gemini 摘要失敗:", str(e)[:120]); return None
+        print("Gemini recap 失敗:", str(e)[:150]); return {}
 
 try:
     state = json.load(open(STATE, encoding="utf-8"))
@@ -99,7 +128,14 @@ except Exception:
 
 # 找最近一支「已結束直播」。首選 YouTube Data API（機房 IP 可靠）；沒 key 退回 yt-dlp
 vid = title = ""
-if YT_KEY:
+if os.environ.get("HL_VID"):   # 指定影片重發（修正版用）
+    vid = os.environ["HL_VID"]
+    try:
+        import yt_api
+        st_ = yt_api.video_status([vid], YT_KEY).get(vid, {}); title = st_.get("title", "")
+    except Exception: pass
+    print("HL_VID 指定重發:", vid, "|", (title or "")[:40])
+elif YT_KEY:
     try:
         import yt_api
         vid, title = yt_api.find_latest_ended_stream(CH, YT_KEY)
@@ -129,14 +165,13 @@ if not vid:   # 退回 yt-dlp：flat 列 ID + --ignore-errors 批次查 live_sta
 if not vid:
     print("目前沒有已結束的直播（可能還在直播中或只有排程/機房被擋），略過"); sys.exit(0)
 
-if state.get("posted_video") == vid:
+if state.get("posted_video") == vid and not os.environ.get("HL_VID"):
     print("已發過:", vid); sys.exit(0)
 
 url = f"https://www.youtube.com/watch?v={vid}"
 print("處理直播:", vid, "|", (title or "")[:40])
 
-# 已結束的直播 → 產懶人包 + 時間軸
-summary = gemini_summary(fetch_transcript(vid))
+# 已結束的直播 → 產懶人包（總結+今天學到什麼）+ 時間軸
 
 def yt_live_chat(_vid):
     """用 yt-dlp 下載 live chat replay（住宅 IP 可靠、chat_downloader 已壞）→ yield {time_in_seconds, message}。"""
@@ -173,7 +208,7 @@ def yt_live_chat(_vid):
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
-bins = defaultdict(int); samples = defaultdict(list); n = 0
+bins = defaultdict(int); samples = defaultdict(list); chat_all = []; n = 0
 try:
     for m in yt_live_chat(vid):
         t = m.get("time_in_seconds")
@@ -183,25 +218,34 @@ try:
         msg = (m.get("message") or "").strip()
         if msg and len(samples[b]) < 3:
             samples[b].append(msg)
+        if msg and (n % 8 == 0) and len(chat_all) < 400:   # 抽樣給 Gemini 當背景
+            chat_all.append(msg)
         n += 1
 except Exception as ex:
     print("抓聊天失敗:", str(ex)[:120])
 
+recap = gemini_recap(fetch_transcript(vid), " / ".join(chat_all), title)
+summary = recap.get("summary"); learned = recap.get("learned") or []
+
 if not summary and n == 0:
     print("摘要和聊天都還沒好，等下次重試"); sys.exit(0)
 
-parts = ["# 🌟 緣結直播・懶人包 🎀", f"**{title}**", ""]
+import datetime as _dt
+_today = (_dt.datetime.utcnow() + _dt.timedelta(hours=8)).strftime("%Y/%m/%d")
+parts = ["# 🌟 緣結直播・懶人包 🎀", f"**{title}**", f"📅 {_today}", ""]
 if summary:
-    parts += ["📝 " + summary, ""]
+    parts += ["📝 **本場總結**", summary, ""]
+if learned:
+    parts += ["📚 **今天學到了什麼**"] + [f"・{x}" for x in learned[:5]] + [""]
 if n > 0:
     parts.append("🔥 **熱門時間軸**")
     ranked = sorted(bins.items(), key=lambda kv: kv[1], reverse=True)[:TOPN]
     for b, c in sorted(ranked, key=lambda kv: kv[0]):
         start = b * WIN
-        samp = " / ".join(samples[b])[:40]
-        parts.append(f"🔥 [`{fmt(start)}`](<{url}&t={start}s>) ・ {c} 則" + (f"　{samp}" if samp else ""))
+        samp = " / ".join(samples[b])[:36]
+        parts.append(f"🔥 [{fmt(start)}](<{url}&t={start}s>) ・ {c} 則" + (f"　{samp}" if samp else ""))
     parts.append(f"（共 {n} 則聊天 ・ 爆量＝精彩，點時間跳轉）")
 post("\n".join(parts))
 state["posted_video"] = vid
 json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
-print(f"✅ 已發懶人包+精華 {vid}（摘要:{bool(summary)} 聊天:{n}）")
+print(f"✅ 已發懶人包+精華 {vid}（總結:{bool(summary)} 學到:{len(learned)} 聊天:{n}）")
