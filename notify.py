@@ -32,6 +32,7 @@ try:
 except Exception:
     state = {}
 first_run = not state
+sys.exit(0)   # ← 開台/新片偵測已改由 enishi-cron worker(notifyCheck) 專責、更可靠；此腳本跳過避免重複通知
 
 # --- 開台偵測 ---
 # 首選 YouTube Data API（機房 IP 也可靠）；沒 key 才退回 yt-dlp（機房常被擋）
