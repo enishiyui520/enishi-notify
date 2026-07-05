@@ -1,4 +1,4 @@
-name: 緣結 通知
+name: 緣結 通知 
 on:
   schedule:
     - cron: "*/5 * * * *"   # 每 5 分鐘檢查（GitHub 排程可能延遲幾分鐘）
