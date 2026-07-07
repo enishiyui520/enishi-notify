@@ -232,7 +232,7 @@ if not summary and n == 0:
 
 import datetime as _dt
 _today = (_dt.datetime.utcnow() + _dt.timedelta(hours=8)).strftime("%Y/%m/%d")
-parts = ["# 🌟 緣結直播・懶人包 🎀", f"**{title}**", f"📅 {_today}", ""]
+parts = ["# 🌟 緣結直播・懶人包 🎀", f"**{title}**", f"📅 {_today}", f"▶️ **完整回放**：{url}", ""]   # 連結一律標示(聊天抓失敗沒時間軸時也要有)
 if summary:
     parts += ["📝 **本場總結**", summary, ""]
 if learned:
