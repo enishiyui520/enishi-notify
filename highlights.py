@@ -224,11 +224,17 @@ try:
 except Exception as ex:
     print("抓聊天失敗:", str(ex)[:120])
 
+fk = "fail_" + vid
+_fails = int(state.get(fk, 0))
+if n == 0 and _fails < 2:   # 聊天還沒抓到(YouTube 間歇擋機房IP)→先不發、等下一輪重抓、給熱門時間軸機會
+    state[fk] = _fails + 1
+    json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
+    print(f"聊天還沒抓到（第 {state[fk]} 次）、等下一輪再試（有聊天才有熱門時間軸）"); sys.exit(0)
+
 recap = gemini_recap(fetch_transcript(vid), " / ".join(chat_all), title)
 summary = recap.get("summary"); learned = recap.get("learned") or []
 
 if not summary and n == 0:
-    fk = "fail_" + vid
     state[fk] = int(state.get(fk, 0)) + 1
     if state[fk] >= 3:   # 連續 3 次抓不到 → 放棄這支、防 yt-dlp+Gemini 每次 run 重試迴圈燒錢
         state["posted_video"] = vid; state.pop(fk, None)
@@ -253,6 +259,6 @@ if n > 0:
         parts.append(f"🔥 [{fmt(start)}](<{url}&t={start}s>) ・ {c} 則" + (f"　{samp}" if samp else ""))
     parts.append(f"（共 {n} 則聊天 ・ 爆量＝精彩，點時間跳轉）")
 post("\n".join(parts))
-state["posted_video"] = vid
+state["posted_video"] = vid; state.pop(fk, None)
 json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
 print(f"✅ 已發懶人包+精華 {vid}（總結:{bool(summary)} 學到:{len(learned)} 聊天:{n}）")
