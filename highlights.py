@@ -228,7 +228,14 @@ recap = gemini_recap(fetch_transcript(vid), " / ".join(chat_all), title)
 summary = recap.get("summary"); learned = recap.get("learned") or []
 
 if not summary and n == 0:
-    print("摘要和聊天都還沒好，等下次重試"); sys.exit(0)
+    fk = "fail_" + vid
+    state[fk] = int(state.get(fk, 0)) + 1
+    if state[fk] >= 3:   # 連續 3 次抓不到 → 放棄這支、防 yt-dlp+Gemini 每次 run 重試迴圈燒錢
+        state["posted_video"] = vid; state.pop(fk, None)
+        json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
+        print("連續 3 次失敗、放棄這支 VOD"); sys.exit(0)
+    json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
+    print(f"摘要和聊天都還沒好（第 {state[fk]} 次），等下次重試"); sys.exit(0)
 
 import datetime as _dt
 _today = (_dt.datetime.utcnow() + _dt.timedelta(hours=8)).strftime("%Y/%m/%d")
