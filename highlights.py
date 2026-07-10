@@ -226,10 +226,11 @@ except Exception as ex:
 
 fk = "fail_" + vid
 _fails = int(state.get(fk, 0))
-if n == 0 and _fails < 2:   # 聊天還沒抓到(YouTube 間歇擋機房IP)→先不發、等下一輪重抓、給熱門時間軸機會
+CHAT_RETRY = 4   # 聊天 replay 常下播後 30~60 分才生成；15 分/輪 ×4 ≈ 撐 1 小時再放棄時間軸
+if n == 0 and _fails < CHAT_RETRY:   # 聊天還沒抓到(YouTube 間歇擋機房IP/replay未生成)→先不發、等下一輪重抓、給熱門時間軸機會
     state[fk] = _fails + 1
     json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
-    print(f"聊天還沒抓到（第 {state[fk]} 次）、等下一輪再試（有聊天才有熱門時間軸）"); sys.exit(0)
+    print(f"聊天還沒抓到（第 {state[fk]}/{CHAT_RETRY} 次）、等下一輪再試（有聊天才有熱門時間軸）"); sys.exit(0)
 
 recap = gemini_recap(fetch_transcript(vid), " / ".join(chat_all), title)
 summary = recap.get("summary"); learned = recap.get("learned") or []
