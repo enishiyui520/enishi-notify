@@ -2,3 +2,10 @@ __pycache__/
 *.db
 x_accounts.db
 x_test.py
+
+# ★ 含明文密鑰、絕不可進這個 public repo（CF token / DeepL / YT key / bot token）
+deploy_*.py
+worker_cron.js
+_local_env.txt
+_*.log
+_*token*.txt
