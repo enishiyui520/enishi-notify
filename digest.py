@@ -97,10 +97,53 @@ def clean(s):
 # 舊版 jieba 詞頻會抓到「不是/就是」這種無意義詞、也會被遊戲用語洗版。
 # 改由 Gemini 讀當天聊天 → 抓 1~3 個真正有意義的社群用語/梗/話題 + 一句解釋 + 為何今天在講。
 
+# ---------- Claude ----------
+# 2026-10-12：先問 Claude（Max 方案每月送的 API 額度），失敗或沒設金鑰才退回下面的 Gemini。
+# Haiku 5.5 預設會先思考、思考也算在 max_tokens 裡 → effort 調低、上限另外多留 4000，不然會沒寫完。
+AKEY = os.environ.get("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-haiku-5-5")
+LLM_USED = Counter()   # 這次每一段是誰寫的，最後印進 log
+
+def claude(prompt, max_tokens=800, want_json=False):
+    """回文字（want_json=True 回 dict）；沒金鑰或失敗回 None，呼叫端自己退回 Gemini。"""
+    if not AKEY:
+        return None
+    body = json.dumps({"model": CLAUDE_MODEL, "max_tokens": max_tokens + 4000,
+                       "output_config": {"effort": "low"},
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body,
+        headers={"content-type": "application/json", "x-api-key": AKEY,
+                 "anthropic-version": "2023-06-01", "User-Agent": UA})
+    try:
+        r = json.loads(urllib.request.urlopen(req, timeout=120).read())
+        if r.get("stop_reason") != "end_turn":
+            raise RuntimeError("沒寫完 stop_reason=" + str(r.get("stop_reason")))
+        txt = "".join(b.get("text", "") for b in r.get("content", []) if b.get("type") == "text").strip()
+        if not txt:
+            raise RuntimeError("空回覆")
+        if want_json:
+            a, z = txt.find("{"), txt.rfind("}")
+            if a < 0 or z <= a:
+                raise RuntimeError("不是 JSON：" + txt[:60])
+            out = json.loads(txt[a:z + 1])
+        else:
+            out = txt
+        LLM_USED["claude"] += 1
+        return out
+    except urllib.error.HTTPError as e:
+        print("Claude 失敗（退回 Gemini）: HTTP", e.code, e.read()[:200].decode("utf-8", "replace"))
+    except Exception as e:
+        print("Claude 失敗（退回 Gemini）:", str(e)[:200])
+    return None
+
 # ---------- Gemini ----------
 def gemini(prompt, max_tokens=800):
+    c = claude(prompt, max_tokens)
+    if c:
+        return c
     if not GKEY:
         return None
+    LLM_USED["gemini"] += 1
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                        "generationConfig": {"temperature": 0.7, "maxOutputTokens": max_tokens,
                                             "thinkingConfig": {"thinkingBudget": 0}}}).encode()
@@ -115,7 +158,7 @@ def gemini(prompt, max_tokens=800):
 
 def hot_terms(sample_text):
     """AI 抓當天最有代表性的 1~3 個社群用語/梗 + 一句解釋（抓觀眾脈絡邏輯）。"""
-    if not GKEY:
+    if not (GKEY or AKEY):
         return []
     prompt = ("以下是 VTuber 緣結 Discord 社群今天的聊天。找出今天最能代表社群的 1~3 個「關鍵用語/梗/話題」，"
               "要有意義：社群黑話、迷因梗、當天反覆出現的主題、動漫或遊戲哏都行。"
@@ -123,6 +166,12 @@ def hot_terms(sample_text):
               "每個用一句話解釋它的意思＋為什麼今天大家在講（抓社群當下的脈絡邏輯）。"
               "若今天沒有明顯的社群用語，terms 給空陣列。只輸出 JSON：\n"
               '{"terms":[{"term":"用語","explain":"一句話解釋＋今天為何在講"}]}\n\n聊天：\n' + sample_text)
+    c = claude(prompt, 600, want_json=True)
+    if c is not None:
+        return (c.get("terms") or [])[:3]
+    if not GKEY:
+        return []
+    LLM_USED["gemini"] += 1
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                        "generationConfig": {"temperature": 0.5, "maxOutputTokens": 600,
                                             "responseMimeType": "application/json",
@@ -196,6 +245,10 @@ grant_yuan({uid: min(n, 30) for uid, n in author_msg.items()})
 _GEM_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GKEY}"
 
 def _gem_json(prompt, temp=0.8, maxtok=600):
+    c = claude(prompt, maxtok, want_json=True)
+    if c is not None:
+        return c
+    LLM_USED["gemini"] += 1
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                        "generationConfig": {"temperature": temp, "maxOutputTokens": maxtok,
                                             "responseMimeType": "application/json", "thinkingConfig": {"thinkingBudget": 0}}}).encode()
@@ -203,7 +256,7 @@ def _gem_json(prompt, temp=0.8, maxtok=600):
     return json.loads("".join(p.get("text", "") for p in r["candidates"][0]["content"].get("parts", [])).strip())
 
 def gen_community_boss(summary):
-    if not GKEY or not summary:
+    if not (GKEY or AKEY) or not summary:
         return
     prompt = (
         "你是「緣結」——可愛俏皮、中日混雜的實習結緣神 VTuber，帶社群打倒「心魔」。"
@@ -236,3 +289,4 @@ def gen_community_boss(summary):
     except Exception as e:
         print("社群頭目 POST 失敗:", str(e)[:150])
 gen_community_boss(digest)
+print("🧠 這次各段是誰寫的:", dict(LLM_USED))
