@@ -75,4 +75,8 @@ async def guarded():
     except asyncio.TimeoutError:
         print("⏱ X 抓取超過 2 分鐘（多半是被限流），這輪跳過，下輪再抓")
 
+# 第二道保險：就算卡在不讓出控制權的同步呼叫（wait_for 等不到），3 分鐘一到整支程序直接結束、exit 0 不擋後面步驟
+import threading
+threading.Timer(180, lambda: (print("⏱ X 抓取 3 分鐘硬上限，強制結束"), sys.stdout.flush(), os._exit(0))).start()
 asyncio.run(guarded())
+os._exit(0)
