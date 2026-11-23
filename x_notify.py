@@ -67,4 +67,12 @@ async def main():
     json.dump(state, open(STATE, "w", encoding="utf-8"), ensure_ascii=False)
     print(f"done. 新推 {len(new)} 則，發出 {posted} 則")
 
-asyncio.run(main())
+# 11-23：twscrape 遇到 X 限流會「睡到解封」（實測一睡 45 分～1 小時以上），整個 workflow 卡住，
+# 後面每 15 分 dispatch 的都排隊被取消（狂寄 cancelled 信），懶人包步驟也跟著延後。最多等 2 分鐘，抓不到就下輪再抓。
+async def guarded():
+    try:
+        await asyncio.wait_for(main(), timeout=120)
+    except asyncio.TimeoutError:
+        print("⏱ X 抓取超過 2 分鐘（多半是被限流），這輪跳過，下輪再抓")
+
+asyncio.run(guarded())
